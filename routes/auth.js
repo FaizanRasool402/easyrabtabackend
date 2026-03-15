@@ -161,6 +161,54 @@ router.get("/me", async (req, res) => {
   }
 });
 
+router.patch("/profile", async (req, res) => {
+  try {
+    await connectToDatabase();
+    const payload = getTokenPayloadFromRequest(req);
+
+    if (!payload?.id) {
+      return res.status(401).json({ message: "Login required." });
+    }
+
+    const { name, phone, profileImage } = req.body;
+
+    if (!name || !phone) {
+      return res
+        .status(400)
+        .json({ message: "Name and phone are required." });
+    }
+
+    const user = await User.findById(payload.id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    user.name = name;
+    user.phone = phone;
+    if (typeof profileImage === "string") {
+      user.profileImage = profileImage;
+    }
+
+    await user.save();
+
+    return res.status(200).json({
+      message: "Profile updated successfully.",
+      user: {
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        profileImage: user.profileImage ?? "",
+      },
+    });
+  } catch (error) {
+    console.error("Profile update error:", error);
+    return res
+      .status(500)
+      .json({ message: errorMessage(error, "Profile update failed.") });
+  }
+});
+
 router.post("/logout", (_req, res) => {
   res.clearCookie("token", {
     httpOnly: true,
