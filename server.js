@@ -61,6 +61,12 @@ app.use((error, _req, res, next) => {
   return next(error);
 });
 
-app.listen(PORT, () => {
-  console.log(`Backend running on http://localhost:${PORT}`);
-});
+// Important: On Vercel we cannot (and should not) call app.listen().
+// Instead, Vercel will call the Express app via serverless-http.
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Backend running on http://localhost:${PORT}`);
+  });
+}
+
+export default app;

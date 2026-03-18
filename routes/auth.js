@@ -109,7 +109,9 @@ router.post("/login", async (req, res) => {
     res.cookie("token", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      // Cross-site cookies (Vercel frontend -> Vercel backend) need sameSite=None.
+      // Browsers require secure=true when sameSite=None.
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 60 * 60 * 24 * 7 * 1000,
       path: "/",
     });
@@ -213,7 +215,7 @@ router.post("/logout", (_req, res) => {
   res.clearCookie("token", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
   });
 
