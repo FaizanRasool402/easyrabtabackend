@@ -10,54 +10,69 @@ import Property from "../models/Property.js";
 import User from "../models/User.js";
 
 const router = express.Router();
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const uploadsRoot = path.resolve(__dirname, "../uploads/properties");
-const imagesDir = path.join(uploadsRoot, "images");
-const videosDir = path.join(uploadsRoot, "videos");
 
-fs.mkdirSync(imagesDir, { recursive: true });
-fs.mkdirSync(videosDir, { recursive: true });
+// On Vercel, filesystem is read-only so disk storage is not available.
+// Use memory storage on Vercel, disk storage locally.
+const isVercel = !!process.env.VERCEL;
 
-const storage = multer.diskStorage({
-  destination: (_req, file, callback) => {
-    if (file.mimetype.startsWith("image/")) {
-      callback(null, imagesDir);
-      return;
-    }
+let upload;
 
-    if (file.mimetype.startsWith("video/")) {
-      callback(null, videosDir);
-      return;
-    }
+if (isVercel) {
+  upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { files: 7, fileSize: 50 * 1024 * 1024 },
+    fileFilter: (_req, file, callback) => {
+      if (file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/")) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error("Only image and video files are allowed."));
+    },
+  });
+} else {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  const uploadsRoot = path.resolve(__dirname, "../uploads/properties");
+  const imagesDir = path.join(uploadsRoot, "images");
+  const videosDir = path.join(uploadsRoot, "videos");
 
-    callback(new Error("Unsupported file type."), uploadsRoot);
-  },
-  filename: (_req, file, callback) => {
-    const safeBaseName = path
-      .parse(file.originalname)
-      .name.replace(/[^a-zA-Z0-9-_]/g, "-")
-      .toLowerCase();
-    const extension = path.extname(file.originalname).toLowerCase();
-    callback(null, `${Date.now()}-${safeBaseName}${extension}`);
-  },
-});
+  fs.mkdirSync(imagesDir, { recursive: true });
+  fs.mkdirSync(videosDir, { recursive: true });
 
-const upload = multer({
-  storage,
-  limits: {
-    files: 7,
-    fileSize: 50 * 1024 * 1024,
-  },
-  fileFilter: (_req, file, callback) => {
-    if (file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/")) {
-      callback(null, true);
-      return;
-    }
+  const storage = multer.diskStorage({
+    destination: (_req, file, callback) => {
+      if (file.mimetype.startsWith("image/")) {
+        callback(null, imagesDir);
+        return;
+      }
+      if (file.mimetype.startsWith("video/")) {
+        callback(null, videosDir);
+        return;
+      }
+      callback(new Error("Unsupported file type."), uploadsRoot);
+    },
+    filename: (_req, file, callback) => {
+      const safeBaseName = path
+        .parse(file.originalname)
+        .name.replace(/[^a-zA-Z0-9-_]/g, "-")
+        .toLowerCase();
+      const extension = path.extname(file.originalname).toLowerCase();
+      callback(null, `${Date.now()}-${safeBaseName}${extension}`);
+    },
+  });
 
-    callback(new Error("Only image and video files are allowed."));
-  },
-});
+  upload = multer({
+    storage,
+    limits: { files: 7, fileSize: 50 * 1024 * 1024 },
+    fileFilter: (_req, file, callback) => {
+      if (file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/")) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error("Only image and video files are allowed."));
+    },
+  });
+}
 
 function toFileUrl(filePath) {
   const normalizedPath = filePath.replace(/\\/g, "/");
