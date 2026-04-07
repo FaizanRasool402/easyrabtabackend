@@ -48,6 +48,10 @@ if (!process.env.VERCEL) {
   app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 }
 
+app.get("/", (_req, res) => {
+  res.json({ ok: true, message: "Easy Rabta Backend is running!" });
+});
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "easy-rabta-backend" });
 });
