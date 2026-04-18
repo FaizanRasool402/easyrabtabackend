@@ -35,8 +35,9 @@ app.use(
   })
 );
 
-// Handle preflight OPTIONS requests for all routes
-app.options("*", cors());
+// Handle preflight OPTIONS requests for all routes.
+// `*` can break with newer path matching behavior, so use a regex instead.
+app.options(/.*/, cors());
 
 app.use(express.json({ limit: "50mb" }));
 app.use(cookieParser());
