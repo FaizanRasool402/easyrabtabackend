@@ -7,6 +7,8 @@ import authRoutes from "./routes/auth.js";
 import propertiesRoutes from "./routes/properties.js";
 import contactRoutes from "./routes/contact.js";
 import inquiriesRoutes from "./routes/inquiries.js";
+import { connectToDatabase } from "./lib/mongodb.js";
+import { ensureSuperAdmin } from "./lib/ensureSuperAdmin.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -88,12 +90,23 @@ app.use((error, _req, res, next) => {
   return next(error);
 });
 
-// Important: On Vercel we cannot (and should not) call app.listen().
-// Instead, Vercel will call the Express app via serverless-http.
 if (!process.env.VERCEL) {
-  app.listen(PORT, () => {
-    console.log(`Backend running on http://localhost:${PORT}`);
-  });
+  async function startServer() {
+    try {
+      await connectToDatabase();
+      await ensureSuperAdmin();
+
+      app.listen(PORT, () => {
+        console.log(`Backend running on http://localhost:${PORT}`);
+        console.log("Super admin login: admin@gmail.com / 123456");
+      });
+    } catch (error) {
+      console.error("Server startup failed:", error);
+      process.exit(1);
+    }
+  }
+
+  startServer();
 }
 
 export default app;

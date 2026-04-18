@@ -6,6 +6,7 @@ import { getTokenPayloadFromRequest } from "../lib/auth.js";
 import User from "../models/User.js";
 
 const router = express.Router();
+const SUPER_ADMIN_EMAIL = "admin@gmail.com";
 
 function errorMessage(error, fallback) {
   const details = error instanceof Error ? error.message : fallback;
@@ -13,6 +14,25 @@ function errorMessage(error, fallback) {
     return details;
   }
   return fallback;
+}
+
+function resolveUserRole(user) {
+  if (user?.email?.toLowerCase() === SUPER_ADMIN_EMAIL) {
+    return "super_admin";
+  }
+
+  return user?.role ?? "user";
+}
+
+function serializeUser(user) {
+  return {
+    id: user._id.toString(),
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    profileImage: user.profileImage ?? "",
+    role: resolveUserRole(user),
+  };
 }
 
 router.post("/register", async (req, res) => {
@@ -48,17 +68,12 @@ router.post("/register", async (req, res) => {
       password: hashedPassword,
       phone,
       profileImage: typeof profileImage === "string" ? profileImage : "",
+      role: "user",
     });
 
     return res.status(201).json({
       message: "Account created successfully.",
-      user: {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        profileImage: user.profileImage,
-      },
+      user: serializeUser(user),
     });
   } catch (error) {
     console.error("Register error:", error);
@@ -95,12 +110,15 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ message: "Invalid email or password." });
     }
 
+    const resolvedRole = resolveUserRole(user);
+
     const token = jwt.sign(
       {
         id: user._id.toString(),
         email: user.email,
         name: user.name,
         phone: user.phone,
+        role: resolvedRole,
       },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
@@ -118,13 +136,7 @@ router.post("/login", async (req, res) => {
 
     return res.status(200).json({
       message: "Login successful.",
-      user: {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        profileImage: user.profileImage,
-      },
+      user: serializeUser(user),
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -149,13 +161,7 @@ router.get("/me", async (req, res) => {
     }
 
     return res.status(200).json({
-      user: {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        profileImage: user.profileImage ?? "",
-      },
+      user: serializeUser(user),
     });
   } catch (error) {
     console.error("Me error:", error);
@@ -195,13 +201,7 @@ router.patch("/profile", async (req, res) => {
 
     return res.status(200).json({
       message: "Profile updated successfully.",
-      user: {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        profileImage: user.profileImage ?? "",
-      },
+      user: serializeUser(user),
     });
   } catch (error) {
     console.error("Profile update error:", error);
