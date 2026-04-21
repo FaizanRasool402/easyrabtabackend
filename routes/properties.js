@@ -223,6 +223,14 @@ router.post(
         return res.status(400).json({ message: "Max 2 videos allowed." });
       }
 
+      // On Vercel (memory storage) file.path is undefined — skip file URLs.
+      const imageUrls = isVercel
+        ? []
+        : imageFiles.map((file) => toFileUrl(file.path));
+      const videoUrls = isVercel
+        ? []
+        : videoFiles.map((file) => toFileUrl(file.path));
+
       const property = await Property.create({
         owner: user._id,
         title,
@@ -241,8 +249,8 @@ router.post(
         description,
         contactName: finalContactName,
         contactPhone: finalContactPhone,
-        images: imageFiles.map((file) => toFileUrl(file.path)),
-        videos: videoFiles.map((file) => toFileUrl(file.path)),
+        images: imageUrls,
+        videos: videoUrls,
       });
 
       return res.status(201).json({
