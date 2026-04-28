@@ -37,7 +37,7 @@ function serializeUser(user) {
 
 router.post("/register", async (req, res) => {
   try {
-    const { name, email, password, phone, profileImage } = req.body;
+    const { name, email, password, phone, profileImage, role } = req.body;
 
     if (!name || !email || !password || !phone) {
       return res
@@ -62,13 +62,14 @@ router.post("/register", async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const accountRole = role === "dealer" ? "dealer" : "user";
     const user = await User.create({
       name,
       email: normalizedEmail,
       password: hashedPassword,
       phone,
       profileImage: typeof profileImage === "string" ? profileImage : "",
-      role: "user",
+      role: accountRole,
     });
 
     return res.status(201).json({

@@ -7,6 +7,7 @@ import authRoutes from "./routes/auth.js";
 import propertiesRoutes from "./routes/properties.js";
 import contactRoutes from "./routes/contact.js";
 import inquiriesRoutes from "./routes/inquiries.js";
+import blogRoutes from "./routes/blogs.js";
 import { connectToDatabase } from "./lib/mongodb.js";
 import { ensureSuperAdmin } from "./lib/ensureSuperAdmin.js";
 
@@ -62,6 +63,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/properties", propertiesRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/inquiries", inquiriesRoutes);
+app.use("/api/blogs", blogRoutes);
 
 app.use((error, _req, res, next) => {
   if (error?.type === "entity.too.large") {

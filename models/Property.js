@@ -1,5 +1,22 @@
 import mongoose from "mongoose";
 
+const propertyTypes = [
+  "Houses",
+  "Apartments & Flats",
+  "Portions & Floors",
+  "Plots (Residential)",
+  "Plots (Commercial)",
+  "Shops",
+  "Offices",
+  "Commercial Spaces (Plaza / Building)",
+  "Agricultural Land / Farms",
+  "Farmhouses",
+  "house",
+  "apartment",
+  "plot",
+  "commercial",
+];
+
 const propertySchema = new mongoose.Schema(
   {
     owner: {
@@ -11,7 +28,7 @@ const propertySchema = new mongoose.Schema(
     purpose: { type: String, enum: ["sell", "rent"], required: true },
     propertyType: {
       type: String,
-      enum: ["house", "apartment", "plot", "commercial"],
+      enum: propertyTypes,
       required: true,
     },
     city: { type: String, required: true, trim: true },
