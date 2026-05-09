@@ -84,6 +84,14 @@ function toFileUrl(filePath) {
   return normalizedPath.slice(uploadsIndex);
 }
 
+/** Multer sometimes returns a single file object instead of [file] for one upload. */
+function multerFileArray(value) {
+  if (value == null) {
+    return [];
+  }
+  return Array.isArray(value) ? value : [value];
+}
+
 router.get("/mine", async (req, res) => {
   try {
     await connectToDatabase();
@@ -203,8 +211,8 @@ router.post(
         contactPhone,
       } = req.body;
       const files = req.files ?? {};
-      const imageFiles = Array.isArray(files.images) ? files.images : [];
-      const videoFiles = Array.isArray(files.videos) ? files.videos : [];
+      const imageFiles = multerFileArray(files.images);
+      const videoFiles = multerFileArray(files.videos);
 
       const finalContactName = contactName || user.name;
       const finalContactPhone = contactPhone || user.phone;
