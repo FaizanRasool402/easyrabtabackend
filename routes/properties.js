@@ -74,14 +74,23 @@ if (isVercel) {
   });
 }
 
-function toFileUrl(filePath) {
-  const normalizedPath = filePath.replace(/\\/g, "/");
-  const uploadsIndex = normalizedPath.lastIndexOf("/uploads/");
-  if (uploadsIndex === -1) {
-    return normalizedPath;
+function uploadsPathForFile(file) {
+  const folder = file.mimetype?.startsWith("video/") ? "videos" : "images";
+  return `/uploads/properties/${folder}/${file.filename}`;
+}
+
+function toFileUrl(filePath, file) {
+  if (!filePath) {
+    return file?.filename ? uploadsPathForFile(file) : null;
   }
 
-  return normalizedPath.slice(uploadsIndex);
+  const normalizedPath = filePath.replace(/\\/g, "/");
+  const uploadsIndex = normalizedPath.lastIndexOf("/uploads/");
+  if (uploadsIndex !== -1) {
+    return normalizedPath.slice(uploadsIndex);
+  }
+
+  return file?.filename ? uploadsPathForFile(file) : null;
 }
 
 /** Multer sometimes returns a single file object instead of [file] for one upload. */
@@ -90,6 +99,33 @@ function multerFileArray(value) {
     return [];
   }
   return Array.isArray(value) ? value : [value];
+}
+
+function fileToPublicUrl(file) {
+  if (!file) {
+    return null;
+  }
+
+  if (file.path) {
+    const url = toFileUrl(file.path, file);
+    if (url) {
+      return url;
+    }
+  }
+
+  if (file.filename) {
+    return uploadsPathForFile(file);
+  }
+
+  // Serverless (Vercel): store images inline so cards can show uploads without disk
+  if (file.buffer && file.mimetype?.startsWith("image/")) {
+    const maxInlineBytes = 4 * 1024 * 1024;
+    if (file.buffer.length <= maxInlineBytes) {
+      return `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
+    }
+  }
+
+  return null;
 }
 
 router.get("/mine", async (req, res) => {
@@ -231,13 +267,17 @@ router.post(
         return res.status(400).json({ message: "Max 2 videos allowed." });
       }
 
-      // On Vercel (memory storage) file.path is undefined — skip file URLs.
-      const imageUrls = isVercel
-        ? []
-        : imageFiles.map((file) => toFileUrl(file.path));
-      const videoUrls = isVercel
-        ? []
-        : videoFiles.map((file) => toFileUrl(file.path));
+      const imageUrls = imageFiles
+        .map((file) => fileToPublicUrl(file))
+        .filter((url) => typeof url === "string" && url.length > 0);
+      const videoUrls = videoFiles
+        .map((file) => fileToPublicUrl(file))
+        .filter(
+          (url) =>
+            typeof url === "string" &&
+            url.length > 0 &&
+            !url.startsWith("data:image")
+        );
 
       const property = await Property.create({
         owner: user._id,
