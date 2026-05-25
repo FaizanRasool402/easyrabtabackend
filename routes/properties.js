@@ -8,6 +8,7 @@ import { connectToDatabase } from "../lib/mongodb.js";
 import { getTokenPayloadFromRequest } from "../lib/auth.js";
 import Property from "../models/Property.js";
 import User from "../models/User.js";
+import { imageFileToDataUrl } from "../lib/imageUpload.js";
 
 const router = express.Router();
 
@@ -101,7 +102,7 @@ function multerFileArray(value) {
   return Array.isArray(value) ? value : [value];
 }
 
-function fileToPublicUrl(file) {
+function fileToVideoUrl(file) {
   if (!file) {
     return null;
   }
@@ -115,14 +116,6 @@ function fileToPublicUrl(file) {
 
   if (file.filename) {
     return uploadsPathForFile(file);
-  }
-
-  // Serverless (Vercel): store images inline so cards can show uploads without disk
-  if (file.buffer && file.mimetype?.startsWith("image/")) {
-    const maxInlineBytes = 4 * 1024 * 1024;
-    if (file.buffer.length <= maxInlineBytes) {
-      return `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
-    }
   }
 
   return null;
@@ -267,17 +260,13 @@ router.post(
         return res.status(400).json({ message: "Max 2 videos allowed." });
       }
 
-      const imageUrls = imageFiles
-        .map((file) => fileToPublicUrl(file))
-        .filter((url) => typeof url === "string" && url.length > 0);
+      const imageUrls = (
+        await Promise.all(imageFiles.map((file) => imageFileToDataUrl(file)))
+      ).filter((url) => typeof url === "string" && url.length > 0);
+
       const videoUrls = videoFiles
-        .map((file) => fileToPublicUrl(file))
-        .filter(
-          (url) =>
-            typeof url === "string" &&
-            url.length > 0 &&
-            !url.startsWith("data:image")
-        );
+        .map((file) => fileToVideoUrl(file))
+        .filter((url) => typeof url === "string" && url.length > 0);
 
       const property = await Property.create({
         owner: user._id,
