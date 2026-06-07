@@ -11,6 +11,7 @@ import User from "../models/User.js";
 import { imageFileToDataUrl } from "../lib/imageUpload.js";
 
 const router = express.Router();
+const LISTING_DAYS = 30;
 
 // On Vercel, filesystem is read-only so disk storage is not available.
 // Use memory storage on Vercel, disk storage locally.
@@ -21,7 +22,7 @@ let upload;
 if (isVercel) {
   upload = multer({
     storage: multer.memoryStorage(),
-    limits: { files: 7, fileSize: 50 * 1024 * 1024 },
+    limits: { files: 8, fileSize: 50 * 1024 * 1024 },
     fileFilter: (_req, file, callback) => {
       if (file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/")) {
         callback(null, true);
@@ -64,7 +65,7 @@ if (isVercel) {
 
   upload = multer({
     storage,
-    limits: { files: 7, fileSize: 50 * 1024 * 1024 },
+    limits: { files: 8, fileSize: 50 * 1024 * 1024 },
     fileFilter: (_req, file, callback) => {
       if (file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/")) {
         callback(null, true);
@@ -121,6 +122,91 @@ function fileToVideoUrl(file) {
   return null;
 }
 
+function addDays(date, days) {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+function isSuperAdmin(payload) {
+  return payload?.role === "super_admin" || payload?.email === "admin@gmail.com";
+}
+
+function listingExpiresAt(property) {
+  if (property.expiresAt) {
+    return new Date(property.expiresAt);
+  }
+
+  return addDays(property.createdAt ?? new Date(), LISTING_DAYS);
+}
+
+function publicListingFilter(baseFilters = {}) {
+  const cutoff = new Date(Date.now() - LISTING_DAYS * 24 * 60 * 60 * 1000);
+  return {
+    ...baseFilters,
+    status: { $nin: ["expired", "sold"] },
+    $or: [
+      { expiresAt: { $gte: new Date() } },
+      { expiresAt: { $exists: false }, createdAt: { $gte: cutoff } },
+    ],
+  };
+}
+
+function serializeProperty(property) {
+  const serialized = property.toObject ? property.toObject() : { ...property };
+  const expiresAt = listingExpiresAt(serialized);
+  const expired = expiresAt.getTime() < Date.now() || serialized.status === "expired";
+
+  return {
+    ...serialized,
+    expiresAt,
+    status: expired ? "expired" : serialized.status ?? "active",
+  };
+}
+
+function mediaDataUrl(file) {
+  if (!file?.buffer || !file?.mimetype) {
+    return "";
+  }
+
+  return `data:${file.mimetype};base64,${file.buffer.toString("base64")}`;
+}
+
+function uploadedImageUrls(imageFiles) {
+  if (isVercel) {
+    return imageFiles.map(mediaDataUrl).filter(Boolean);
+  }
+
+  return imageFiles.map((file) => toFileUrl(file.path));
+}
+
+function uploadedVideoUrls(videoFiles) {
+  if (isVercel) {
+    return [];
+  }
+
+  return videoFiles.map((file) => toFileUrl(file.path));
+}
+
+function parseStringArray(value) {
+  if (Array.isArray(value)) {
+    return value.filter((item) => typeof item === "string");
+  }
+
+  if (typeof value !== "string" || !value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item) => typeof item === "string")
+      : [];
+  } catch {
+    return [value];
+  }
+}
+
 router.get("/mine", async (req, res) => {
   try {
     await connectToDatabase();
@@ -134,7 +220,7 @@ router.get("/mine", async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    return res.status(200).json({ properties });
+    return res.status(200).json({ properties: properties.map(serializeProperty) });
   } catch (error) {
     console.error("Properties mine error:", error);
     const message =
@@ -146,6 +232,7 @@ router.get("/mine", async (req, res) => {
 router.get("/", async (req, res) => {
   try {
     await connectToDatabase();
+    const payload = getTokenPayloadFromRequest(req);
 
     const filters = {};
     if (typeof req.query.purpose === "string" && req.query.purpose) {
@@ -158,8 +245,11 @@ router.get("/", async (req, res) => {
       filters.tag = req.query.tag;
     }
 
-    const properties = await Property.find(filters).sort({ createdAt: -1 }).lean();
-    return res.status(200).json({ properties });
+    const query = isSuperAdmin(payload) ? filters : publicListingFilter(filters);
+    const properties = await Property.find(query)
+      .sort({ isPaidListing: -1, createdAt: -1 })
+      .lean();
+    return res.status(200).json({ properties: properties.map(serializeProperty) });
   } catch (error) {
     console.error("Properties list error:", error);
     const message =
@@ -181,16 +271,18 @@ router.get("/:id", async (req, res) => {
       return res.status(400).json({ message: "Invalid property id." });
     }
 
-    const property = await Property.findOne({
-      _id: req.params.id,
-      owner: payload.id,
-    }).lean();
+    const filters = { _id: req.params.id };
+    if (!isSuperAdmin(payload)) {
+      filters.owner = payload.id;
+    }
+
+    const property = await Property.findOne(filters).lean();
 
     if (!property) {
       return res.status(404).json({ message: "Property not found." });
     }
 
-    return res.status(200).json({ property });
+    return res.status(200).json({ property: serializeProperty(property) });
   } catch (error) {
     console.error("Property detail error:", error);
     const message =
@@ -204,6 +296,7 @@ router.post(
   upload.fields([
     { name: "images", maxCount: 5 },
     { name: "videos", maxCount: 2 },
+    { name: "paymentProof", maxCount: 1 },
   ]),
   async (req, res) => {
     try {
@@ -238,10 +331,12 @@ router.post(
         description,
         contactName,
         contactPhone,
+        paymentReference,
       } = req.body;
       const files = req.files ?? {};
       const imageFiles = multerFileArray(files.images);
       const videoFiles = multerFileArray(files.videos);
+      const paymentProofFiles = multerFileArray(files.paymentProof);
 
       const finalContactName = contactName || user.name;
       const finalContactPhone = contactPhone || user.phone;
@@ -267,6 +362,16 @@ router.post(
       const videoUrls = videoFiles
         .map((file) => fileToVideoUrl(file))
         .filter((url) => typeof url === "string" && url.length > 0);
+      const paidTagRequested = ["premium", "hot-deal", "investor-pick"].includes(tag);
+      const paymentProofUrl =
+        (await imageFileToDataUrl(paymentProofFiles[0])) ?? "";
+
+      if (paidTagRequested && (!paymentReference || !paymentProofUrl)) {
+        return res.status(400).json({
+          message:
+            "Paid listings require bank payment reference and payment proof screenshot.",
+        });
+      }
 
       const property = await Property.create({
         owner: user._id,
@@ -283,11 +388,16 @@ router.post(
         coveredArea,
         plotSize,
         tag,
+        isPaidListing: false,
+        paymentStatus: paidTagRequested ? "pending" : "unpaid",
+        paymentReference,
+        paymentProof: paymentProofUrl,
         description,
         contactName: finalContactName,
         contactPhone: finalContactPhone,
         images: imageUrls,
         videos: videoUrls,
+        expiresAt: addDays(new Date(), LISTING_DAYS),
       });
 
       return res.status(201).json({
@@ -303,7 +413,14 @@ router.post(
   }
 );
 
-router.put("/:id", async (req, res) => {
+router.put(
+  "/:id",
+  upload.fields([
+    { name: "images", maxCount: 5 },
+    { name: "videos", maxCount: 2 },
+    { name: "paymentProof", maxCount: 1 },
+  ]),
+  async (req, res) => {
   try {
     await connectToDatabase();
     const payload = getTokenPayloadFromRequest(req);
@@ -316,10 +433,12 @@ router.put("/:id", async (req, res) => {
       return res.status(400).json({ message: "Invalid property id." });
     }
 
-    const property = await Property.findOne({
-      _id: req.params.id,
-      owner: payload.id,
-    });
+    const filters = { _id: req.params.id };
+    if (!isSuperAdmin(payload)) {
+      filters.owner = payload.id;
+    }
+
+    const property = await Property.findOne(filters);
 
     if (!property) {
       return res.status(404).json({ message: "Property not found." });
@@ -342,6 +461,10 @@ router.put("/:id", async (req, res) => {
       "description",
       "contactName",
       "contactPhone",
+      "status",
+      "isPaidListing",
+      "paymentStatus",
+      "paymentReference",
     ];
 
     for (const field of allowedFields) {
@@ -355,8 +478,69 @@ router.put("/:id", async (req, res) => {
         continue;
       }
 
+      if (field === "isPaidListing") {
+        if (!isSuperAdmin(payload)) {
+          continue;
+        }
+        property[field] = req.body[field] === true || req.body[field] === "true";
+        continue;
+      }
+
+      if (field === "paymentStatus" && !isSuperAdmin(payload)) {
+        continue;
+      }
+
       property[field] = req.body[field];
     }
+
+    const files = req.files ?? {};
+    const imageFiles = multerFileArray(files.images);
+    const videoFiles = multerFileArray(files.videos);
+    const paymentProofFiles = multerFileArray(files.paymentProof);
+    const existingImages = parseStringArray(req.body.existingImages);
+    const existingVideos = parseStringArray(req.body.existingVideos);
+
+    if ("existingImages" in req.body || imageFiles.length > 0) {
+      const newImageUrls = (
+        await Promise.all(imageFiles.map((file) => imageFileToDataUrl(file)))
+      ).filter((url) => typeof url === "string" && url.length > 0);
+      const nextImages = [...existingImages, ...newImageUrls];
+      if (nextImages.length > 5) {
+        return res.status(400).json({ message: "Max 5 images allowed." });
+      }
+      property.images = nextImages;
+    }
+
+    if ("existingVideos" in req.body || videoFiles.length > 0) {
+      const newVideoUrls = videoFiles
+        .map((file) => fileToVideoUrl(file))
+        .filter((url) => typeof url === "string" && url.length > 0);
+      const nextVideos = [...existingVideos, ...newVideoUrls];
+      if (nextVideos.length > 2) {
+        return res.status(400).json({ message: "Max 2 videos allowed." });
+      }
+      property.videos = nextVideos;
+    }
+
+    if (paymentProofFiles.length > 0) {
+      property.paymentProof = (await imageFileToDataUrl(paymentProofFiles[0])) ?? "";
+    }
+
+    const paidTagRequested = ["premium", "hot-deal", "investor-pick"].includes(property.tag);
+    if (
+      paidTagRequested &&
+      property.paymentStatus !== "verified" &&
+      (!property.paymentReference || !property.paymentProof)
+    ) {
+      return res.status(400).json({
+        message:
+          "Paid listings require bank payment reference and payment proof screenshot.",
+      });
+    }
+    if (paidTagRequested && property.paymentStatus === "unpaid") {
+      property.paymentStatus = "pending";
+    }
+    property.isPaidListing = property.paymentStatus === "verified";
 
     if (!property.title || !property.city || !property.price || !property.contactPhone) {
       return res.status(400).json({
@@ -368,12 +552,80 @@ router.put("/:id", async (req, res) => {
 
     return res.status(200).json({
       message: "Property updated successfully.",
-      property,
+      property: serializeProperty(property),
     });
   } catch (error) {
     console.error("Property update error:", error);
     const message =
       error instanceof Error ? error.message : "Property update failed.";
+    return res.status(500).json({ message });
+  }
+});
+
+router.post("/:id/view", async (req, res) => {
+  try {
+    await connectToDatabase();
+
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: "Invalid property id." });
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const property = await Property.findById(req.params.id);
+    if (!property) {
+      return res.status(404).json({ message: "Property not found." });
+    }
+
+    const day = property.dailyViews.find((item) => item.date === today);
+    if (day) {
+      day.count += 1;
+    } else {
+      property.dailyViews.push({ date: today, count: 1 });
+    }
+    property.totalViews = Number(property.totalViews ?? 0) + 1;
+
+    await property.save();
+
+    return res.status(200).json({
+      totalViews: property.totalViews,
+      dailyViews: property.dailyViews,
+    });
+  } catch (error) {
+    console.error("Property view error:", error);
+    const message =
+      error instanceof Error ? error.message : "Property view update failed.";
+    return res.status(500).json({ message });
+  }
+});
+
+router.delete("/:id", async (req, res) => {
+  try {
+    await connectToDatabase();
+    const payload = getTokenPayloadFromRequest(req);
+
+    if (!payload?.id) {
+      return res.status(401).json({ message: "Login is required." });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: "Invalid property id." });
+    }
+
+    const filters = { _id: req.params.id };
+    if (!isSuperAdmin(payload)) {
+      filters.owner = payload.id;
+    }
+
+    const property = await Property.findOneAndDelete(filters);
+    if (!property) {
+      return res.status(404).json({ message: "Property not found." });
+    }
+
+    return res.status(200).json({ message: "Property deleted successfully." });
+  } catch (error) {
+    console.error("Property delete error:", error);
+    const message =
+      error instanceof Error ? error.message : "Property delete failed.";
     return res.status(500).json({ message });
   }
 });

@@ -46,6 +46,27 @@ const propertySchema = new mongoose.Schema(
     contactPhone: { type: String, required: true, trim: true },
     images: [{ type: String }],
     videos: [{ type: String }],
+    status: {
+      type: String,
+      enum: ["active", "expired", "sold"],
+      default: "active",
+    },
+    expiresAt: { type: Date },
+    isPaidListing: { type: Boolean, default: false },
+    paymentStatus: {
+      type: String,
+      enum: ["unpaid", "pending", "verified"],
+      default: "unpaid",
+    },
+    paymentReference: { type: String, trim: true },
+    paymentProof: { type: String, trim: true },
+    dailyViews: [
+      {
+        date: { type: String, required: true },
+        count: { type: Number, default: 0 },
+      },
+    ],
+    totalViews: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
