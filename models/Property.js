@@ -67,6 +67,8 @@ const propertySchema = new mongoose.Schema(
       },
     ],
     totalViews: { type: Number, default: 0 },
+    monthlyEditKey: { type: String, trim: true },
+    monthlyEditCount: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

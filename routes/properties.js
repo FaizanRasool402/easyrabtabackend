@@ -12,6 +12,9 @@ import { imageFileToDataUrl } from "../lib/imageUpload.js";
 
 const router = express.Router();
 const LISTING_DAYS = 30;
+const MONTHLY_USER_EDIT_LIMIT = 3;
+const PAID_TAGS = ["premium", "hot-deal", "investor-pick"];
+const USER_ALLOWED_TAGS = ["featured", "premium", "hot-deal", "investor-pick", "new", "budget"];
 
 // On Vercel, filesystem is read-only so disk storage is not available.
 // Use memory storage on Vercel, disk storage locally.
@@ -128,6 +131,14 @@ function addDays(date, days) {
   return result;
 }
 
+function monthKey(date = new Date()) {
+  return date.toISOString().slice(0, 7);
+}
+
+function userSafeTag(tag) {
+  return USER_ALLOWED_TAGS.includes(tag) ? tag : "featured";
+}
+
 function isSuperAdmin(payload) {
   return payload?.role === "super_admin" || payload?.email === "admin@gmail.com";
 }
@@ -156,11 +167,26 @@ function serializeProperty(property) {
   const serialized = property.toObject ? property.toObject() : { ...property };
   const expiresAt = listingExpiresAt(serialized);
   const expired = expiresAt.getTime() < Date.now() || serialized.status === "expired";
+  const currentMonthKey = monthKey();
+  const monthlyEditCount =
+    serialized.monthlyEditKey === currentMonthKey
+      ? Number(serialized.monthlyEditCount ?? 0)
+      : 0;
+  const isPaidListing =
+    Boolean(serialized.isPaidListing) || serialized.paymentStatus === "verified";
 
   return {
     ...serialized,
+    tag:
+      serialized.tag === "verified" && serialized.paymentStatus !== "verified"
+        ? "featured"
+        : serialized.tag,
+    isPaidListing,
     expiresAt,
     status: expired ? "expired" : serialized.status ?? "active",
+    monthlyEditCount,
+    monthlyEditLimit: MONTHLY_USER_EDIT_LIMIT,
+    remainingMonthlyEdits: Math.max(0, MONTHLY_USER_EDIT_LIMIT - monthlyEditCount),
   };
 }
 
@@ -282,6 +308,27 @@ router.get("/:id", async (req, res) => {
       return res.status(404).json({ message: "Property not found." });
     }
 
+    if (!isSuperAdmin(payload)) {
+      const currentMonthKey = monthKey();
+      const currentEditCount =
+        property.monthlyEditKey === currentMonthKey
+          ? Number(property.monthlyEditCount ?? 0)
+          : 0;
+
+      if (currentEditCount >= MONTHLY_USER_EDIT_LIMIT) {
+        return res.status(429).json({
+          message:
+            "Monthly edit limit reached. You can edit each listing only 3 times in a month.",
+          monthlyEditLimit: MONTHLY_USER_EDIT_LIMIT,
+          monthlyEditCount: currentEditCount,
+          remainingMonthlyEdits: 0,
+        });
+      }
+
+      property.monthlyEditKey = currentMonthKey;
+      property.monthlyEditCount = currentEditCount + 1;
+    }
+
     return res.status(200).json({ property: serializeProperty(property) });
   } catch (error) {
     console.error("Property detail error:", error);
@@ -362,7 +409,8 @@ router.post(
       const videoUrls = videoFiles
         .map((file) => fileToVideoUrl(file))
         .filter((url) => typeof url === "string" && url.length > 0);
-      const paidTagRequested = ["premium", "hot-deal", "investor-pick"].includes(tag);
+      const safeTag = userSafeTag(tag);
+      const paidTagRequested = PAID_TAGS.includes(safeTag);
       const paymentProofUrl =
         (await imageFileToDataUrl(paymentProofFiles[0])) ?? "";
 
@@ -387,7 +435,7 @@ router.post(
         areaSize,
         coveredArea,
         plotSize,
-        tag,
+        tag: safeTag,
         isPaidListing: false,
         paymentStatus: paidTagRequested ? "pending" : "unpaid",
         paymentReference,
@@ -490,6 +538,11 @@ router.put(
         continue;
       }
 
+      if (field === "tag" && !isSuperAdmin(payload)) {
+        property[field] = userSafeTag(req.body[field]);
+        continue;
+      }
+
       property[field] = req.body[field];
     }
 
@@ -526,7 +579,7 @@ router.put(
       property.paymentProof = (await imageFileToDataUrl(paymentProofFiles[0])) ?? "";
     }
 
-    const paidTagRequested = ["premium", "hot-deal", "investor-pick"].includes(property.tag);
+    const paidTagRequested = PAID_TAGS.includes(property.tag);
     if (
       paidTagRequested &&
       property.paymentStatus !== "verified" &&
@@ -535,6 +588,15 @@ router.put(
       return res.status(400).json({
         message:
           "Paid listings require bank payment reference and payment proof screenshot.",
+      });
+    }
+    if (
+      property.paymentStatus === "verified" &&
+      (!property.paymentReference || !property.paymentProof)
+    ) {
+      return res.status(400).json({
+        message:
+          "Admin verification requires bank payment reference and proof screenshot.",
       });
     }
     if (paidTagRequested && property.paymentStatus === "unpaid") {
