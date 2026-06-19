@@ -13,6 +13,7 @@ import { imageFileToDataUrl } from "../lib/imageUpload.js";
 const router = express.Router();
 const LISTING_DAYS = 30;
 const MONTHLY_USER_EDIT_LIMIT = 3;
+const CONTACT_POST_LIMIT = 3;
 const PAID_TAGS = ["premium", "hot-deal", "investor-pick"];
 const USER_ALLOWED_TAGS = ["featured", "premium", "hot-deal", "investor-pick", "new", "budget"];
 
@@ -135,6 +136,10 @@ function monthKey(date = new Date()) {
   return date.toISOString().slice(0, 7);
 }
 
+function normalizePhoneNumber(phone = "") {
+  return String(phone).replace(/\D/g, "").replace(/^92/, "0");
+}
+
 function userSafeTag(tag) {
   return USER_ALLOWED_TAGS.includes(tag) ? tag : "featured";
 }
@@ -151,7 +156,7 @@ function listingExpiresAt(property) {
   return addDays(property.createdAt ?? new Date(), LISTING_DAYS);
 }
 
-function publicListingFilter(baseFilters = {}) {
+function activeListingFilter(baseFilters = {}) {
   const cutoff = new Date(Date.now() - LISTING_DAYS * 24 * 60 * 60 * 1000);
   return {
     ...baseFilters,
@@ -160,6 +165,13 @@ function publicListingFilter(baseFilters = {}) {
       { expiresAt: { $gte: new Date() } },
       { expiresAt: { $exists: false }, createdAt: { $gte: cutoff } },
     ],
+  };
+}
+
+function publicListingFilter(baseFilters = {}) {
+  return {
+    ...activeListingFilter(baseFilters),
+    paymentStatus: { $ne: "pending" },
   };
 }
 
@@ -391,6 +403,20 @@ router.post(
       if (!title || !city || !price || !finalContactPhone) {
         return res.status(400).json({
           message: "Title, city, price, and contact phone are required.",
+        });
+      }
+
+      const normalizedContactPhone = normalizePhoneNumber(finalContactPhone);
+      const activeListings = await Property.find(activeListingFilter({}))
+        .select("contactPhone")
+        .lean();
+      const activePostsFromNumber = activeListings.filter(
+        (property) =>
+          normalizePhoneNumber(property.contactPhone) === normalizedContactPhone
+      ).length;
+      if (activePostsFromNumber >= CONTACT_POST_LIMIT) {
+        return res.status(429).json({
+          message: `This phone number already has ${CONTACT_POST_LIMIT} active property posts.`,
         });
       }
 

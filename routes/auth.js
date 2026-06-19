@@ -62,7 +62,8 @@ router.post("/register", async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const accountRole = role === "dealer" ? "dealer" : "user";
+    const accountRole =
+      role === "dealer" ? "dealer" : role === "owner" ? "owner" : "user";
     const user = await User.create({
       name,
       email: normalizedEmail,
