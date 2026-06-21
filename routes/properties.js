@@ -399,6 +399,8 @@ router.post(
 
       const finalContactName = contactName || user.name;
       const finalContactPhone = contactPhone || user.phone;
+      const safeTag = userSafeTag(tag);
+      const paidTagRequested = PAID_TAGS.includes(safeTag);
 
       if (!title || !city || !price || !finalContactPhone) {
         return res.status(400).json({
@@ -407,16 +409,22 @@ router.post(
       }
 
       const normalizedContactPhone = normalizePhoneNumber(finalContactPhone);
-      const activeListings = await Property.find(activeListingFilter({}))
+      const activeFreeListings = await Property.find(
+        activeListingFilter({
+          owner: user._id,
+          paymentStatus: "unpaid",
+          tag: { $nin: PAID_TAGS },
+        })
+      )
         .select("contactPhone")
         .lean();
-      const activePostsFromNumber = activeListings.filter(
+      const activeFreePostsFromNumber = activeFreeListings.filter(
         (property) =>
           normalizePhoneNumber(property.contactPhone) === normalizedContactPhone
       ).length;
-      if (activePostsFromNumber >= CONTACT_POST_LIMIT) {
+      if (!paidTagRequested && activeFreePostsFromNumber >= CONTACT_POST_LIMIT) {
         return res.status(429).json({
-          message: `This phone number already has ${CONTACT_POST_LIMIT} active property posts.`,
+          message: `This phone number already has ${CONTACT_POST_LIMIT} active free property posts. Select a paid listing option and submit payment proof to request more posts.`,
         });
       }
 
@@ -435,8 +443,6 @@ router.post(
       const videoUrls = videoFiles
         .map((file) => fileToVideoUrl(file))
         .filter((url) => typeof url === "string" && url.length > 0);
-      const safeTag = userSafeTag(tag);
-      const paidTagRequested = PAID_TAGS.includes(safeTag);
       const paymentProofUrl =
         (await imageFileToDataUrl(paymentProofFiles[0])) ?? "";
 
